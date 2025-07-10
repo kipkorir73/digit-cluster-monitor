@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deriv Volatility Cluster Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        input {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 16px;
+            width: 200px;
+            transition: all 0.3s ease;
+        }
+
+        input:focus {
+            background: rgba(255, 255, 255, 0.3);
+            outline: none;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+        }
+
+        select, button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        select:hover, button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 10px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .status.connected {
+            background: rgba(76, 175, 80, 0.3);
+        }
+
+        .status.disconnected {
+            background: rgba(244, 67, 54, 0.3);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+        }
+
+        .volatility-monitors {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .volatility-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .volatility-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .volatility-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .last-tick {
+            font-size: 1.1em;
+            color: #ffd700;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .digit-stream {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+            min-height: 40px;
+            align-items: center;
+        }
+
+        .digit {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            font-weight: bold;
+            min-width: 40px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .digit.cluster-2 {
+            background: rgba(255, 193, 7, 0.7);
+            color: #000;
+            box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
+        }
+
+        .digit.cluster-3 {
+            background: rgba(255, 152, 0, 0.8);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(255, 152, 0, 0.5);
+        }
+
+        .digit.cluster-4 {
+            background: rgba(244, 67, 54, 0.8);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(244, 67, 54, 0.5);
+        }
+
+        .digit.cluster-5 {
+            background: rgba(156, 39, 176, 0.8);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(156, 39, 176, 0.5);
+        }
+
+        .digit.cluster-6 {
+            background: rgba(103, 58, 183, 0.9);
+            color: #fff;
+            box-shadow: 0 0 15px rgba(103, 58, 183, 0.7);
+        }
+
+        .pattern-info {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 0.9em;
+        }
+
+        .pattern-badge {
+            background: rgba(76, 175, 80, 0.3);
+            padding: 4px 8px;
+            border-radius: 5px;
+            border: 1px solid rgba(76, 175, 80, 0.5);
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .stats-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .stats-card h3 {
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 1.3em;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .stat-number {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #ffd700;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .alerts-log {
+            max-height: 300px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .alert-item {
+            padding: 8px;
+            margin-bottom: 8px;
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            border-left: 4px solid #ffd700;
+            font-size: 0.9em;
+        }
+
+        .alert-time {
+            color: #ccc;
+            font-size: 0.8em;
+        }
+
+        @media (max-width: 1200px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .sidebar {
+                order: -1;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .digit-stream {
+                justify-content: center;
+            }
+            
+            .digit {
+                font-size: 16px;
+                padding: 6px 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Deriv Volatility Cluster Monitor</h1>
+            <p>Real-time pattern detection across all volatility indices</p>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="appIdInput">App ID:</label>
+                <input type="text" id="appIdInput" placeholder="Enter your Deriv app_id" value="1089" style="padding: 10px 15px; border: none; border-radius: 8px; background: rgba(255, 255, 255, 0.2); color: white; font-size: 16px; width: 200px;">
+            </div>
+            <div class="control-group">
+                <label for="volatilitySelect">Display Volatility:</label>
+                <select id="volatilitySelect">
+                    <option value="R_10">Volatility 10</option>
+                    <option value="R_25" selected>Volatility 25</option>
+                    <option value="R_50">Volatility 50</option>
+                    <option value="R_75">Volatility 75</option>
+                    <option value="R_100">Volatility 100</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="alertThreshold">Alert Threshold:</label>
+                <select id="alertThreshold">
+                    <option value="3">3 Clusters</option>
+                    <option value="4" selected>4 Clusters</option>
+                    <option value="5">5 Clusters</option>
+                    <option value="6">6 Clusters</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button id="connectBtn">Connect</button>
+            </div>
+        </div>
+
+        <div class="status disconnected" id="status">
+            Disconnected - Click Connect to start monitoring
+        </div>
+
+        <div class="main-content">
+            <div class="volatility-monitors" id="volatilityMonitors">
+                <!-- Volatility cards will be generated here -->
+            </div>
+
+            <div class="sidebar">
+                <div class="stats-card">
+                    <h3>📊 Pattern Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-number" id="clusters3">0</div>
+                            <div class="stat-label">Ended at 3</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number" id="clusters4">0</div>
+                            <div class="stat-label">Ended at 4</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number" id="clusters5">0</div>
+                            <div class="stat-label">Ended at 5</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number" id="clusters6">0</div>
+                            <div class="stat-label">Ended at 6</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stats-card">
+                    <h3>🔔 Recent Alerts</h3>
+                    <div class="alerts-log" id="alertsLog">
+                        <div class="alert-item">
+                            <div>System ready - waiting for patterns...</div>
+                            <div class="alert-time">Ready to monitor</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class VolatilityMonitor {
+            constructor() {
+                this.socket = null;
+                this.volatilities = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100'];
+                this.data = {};
+                this.patterns = {};
+                this.stats = { 3: 0, 4: 0, 5: 0, 6: 0 };
+                this.alertThreshold = 4;
+                this.isConnected = false;
+                this.speechSynthesis = window.speechSynthesis;
+                
+                this.initializeData();
+                this.initializeUI();
+                this.bindEvents();
+            }
+
+            initializeData() {
+                this.volatilities.forEach(vol => {
+                    this.data[vol] = {
+                        digits: [],
+                        clusters: {},
+                        patterns: {},
+                        lastTick: null
+                    };
+                });
+            }
+
+            initializeUI() {
+                const monitorsContainer = document.getElementById('volatilityMonitors');
+                
+                this.volatilities.forEach(vol => {
+                    const card = document.createElement('div');
+                    card.className = 'volatility-card';
+                    card.innerHTML = `
+                        <div class="volatility-header">
+                            <div class="volatility-title">${vol.replace('_', ' ')}</div>
+                            <div class="last-tick" id="lastTick-${vol}">--</div>
+                        </div>
+                        <div class="digit-stream" id="stream-${vol}"></div>
+                        <div class="pattern-info" id="patterns-${vol}"></div>
+                    `;
+                    monitorsContainer.appendChild(card);
+                });
+            }
+
+            bindEvents() {
+                document.getElementById('connectBtn').addEventListener('click', () => {
+                    if (this.isConnected) {
+                        this.disconnect();
+                    } else {
+                        this.connect();
+                    }
+                });
+
+                document.getElementById('alertThreshold').addEventListener('change', (e) => {
+                    this.alertThreshold = parseInt(e.target.value);
+                });
+            }
+
+            connect() {
+                const appId = document.getElementById('appIdInput').value.trim();
+                if (!appId) {
+                    this.updateStatus('Please enter a valid App ID', 'disconnected');
+                    return;
+                }
+
+                this.socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+
+                this.socket.onopen = () => {
+                    console.log('Connected to Deriv WebSocket');
+                    this.isConnected = true;
+                    this.updateStatus('Connected - Subscribing to volatilities...', 'connected');
+                    document.getElementById('connectBtn').textContent = 'Disconnect';
+                    
+                    // Subscribe to all volatilities with proper format and req_id
+                    this.volatilities.forEach((vol, index) => {
+                        setTimeout(() => {
+                            const subscribeMessage = {
+                                ticks: vol,
+                                subscribe: 1,
+                                req_id: index + 1
+                            };
+                            console.log(`Subscribing to ${vol}:`, subscribeMessage);
+                            this.socket.send(JSON.stringify(subscribeMessage));
+                        }, index * 200); // Stagger subscriptions by 200ms
+                    });
+                };
+
+                this.socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('Received data:', data);
+                        
+                        if (data.tick) {
+                            console.log('Processing tick:', data.tick);
+                            this.processTick(data.tick);
+                        } else if (data.subscription) {
+                            console.log('Subscription confirmed:', data.subscription);
+                            this.updateStatus('Connected - Monitoring all volatilities', 'connected');
+                        } else if (data.error) {
+                            console.error('API Error:', data.error);
+                            this.updateStatus(`Error: ${data.error.message}`, 'disconnected');
+                        } else if (data.msg_type === 'tick') {
+                            console.log('Tick message received:', data);
+                            if (data.echo_req && data.echo_req.ticks) {
+                                // Handle tick data in different format
+                                this.processTick({
+                                    symbol: data.echo_req.ticks,
+                                    quote: data.tick ? data.tick.quote : null,
+                                    epoch: data.tick ? data.tick.epoch : null
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error parsing message:', e, 'Raw data:', event.data);
+                    }
+                };
+
+                this.socket.onclose = (event) => {
+                    console.log('Disconnected from Deriv WebSocket', event);
+                    this.isConnected = false;
+                    this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
+                    document.getElementById('connectBtn').textContent = 'Connect';
+                };
+
+                this.socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.updateStatus('Connection error - Check console for details', 'disconnected');
+                };
+            }
+
+            disconnect() {
+                if (this.socket) {
+                    this.socket.close();
+                }
+            }
+
+            updateStatus(message, className) {
+                const statusEl = document.getElementById('status');
+                statusEl.textContent = message;
+                statusEl.className = `status ${className}`;
+            }
+
+            processTick(tick) {
+                console.log('Processing tick data:', tick);
+                
+                const symbol = tick.symbol;
+                let quote = tick.quote;
+                
+                if (!this.data[symbol]) {
+                    console.log(`Unknown symbol: ${symbol}`);
+                    return;
+                }
+
+                if (!quote) {
+                    console.log('No quote in tick data:', tick);
+                    return;
+                }
+
+                // Extract last digit - handle both integer and decimal quotes
+                const quoteStr = quote.toString();
+                const lastDigit = parseInt(quoteStr.slice(-1));
+                
+                console.log(`${symbol}: ${quote} -> digit ${lastDigit}`);
+                
+                // Update last tick display
+                const lastTickEl = document.getElementById(`lastTick-${symbol}`);
+                if (lastTickEl) {
+                    lastTickEl.textContent = typeof quote === 'number' ? quote.toFixed(5) : quote;
+                }
+                
+                // Add digit to stream
+                this.data[symbol].digits.push(lastDigit);
+                
+                // Keep only last 30 digits
+                if (this.data[symbol].digits.length > 30) {
+                    this.data[symbol].digits.shift();
+                }
+                
+                console.log(`${symbol} digit stream:`, this.data[symbol].digits);
+                
+                // Analyze patterns
+                this.analyzePatterns(symbol);
+                
+                // Update UI
+                this.updateDigitStream(symbol);
+                this.updatePatternInfo(symbol);
+            }
+
+            analyzePatterns(symbol) {
+                const digits = this.data[symbol].digits;
+                const clusters = {};
+                
+                // Find all clusters
+                for (let digit = 0; digit <= 9; digit++) {
+                    clusters[digit] = this.findClusters(digits, digit);
+                }
+                
+                // Update pattern tracking
+                for (let digit = 0; digit <= 9; digit++) {
+                    const clusterCount = clusters[digit].length;
+                    const previousCount = this.data[symbol].patterns[digit] || 0;
+                    
+                    if (clusterCount > previousCount) {
+                        // New cluster formed
+                        this.data[symbol].patterns[digit] = clusterCount;
+                        
+                        // Check if we should alert
+                        if (clusterCount === this.alertThreshold) {
+                            this.triggerAlert(symbol, digit, clusterCount);
+                        }
+                    } else if (clusterCount < previousCount) {
+                        // Pattern ended, record stats
+                        this.recordPatternEnd(previousCount);
+                        this.data[symbol].patterns[digit] = clusterCount;
+                    }
+                }
+                
+                this.data[symbol].clusters = clusters;
+            }
+
+            findClusters(digits, targetDigit) {
+                const clusters = [];
+                let currentCluster = [];
+                
+                for (let i = 0; i < digits.length; i++) {
+                    if (digits[i] === targetDigit) {
+                        currentCluster.push(i);
+                    } else {
+                        if (currentCluster.length >= 2) {
+                            clusters.push([...currentCluster]);
+                        }
+                        currentCluster = [];
+                    }
+                }
+                
+                // Don't forget the last cluster
+                if (currentCluster.length >= 2) {
+                    clusters.push([...currentCluster]);
+                }
+                
+                return clusters;
+            }
+
+            recordPatternEnd(clusterCount) {
+                if (clusterCount >= 3 && clusterCount <= 6) {
+                    this.stats[clusterCount]++;
+                    document.getElementById(`clusters${clusterCount}`).textContent = this.stats[clusterCount];
+                }
+            }
+
+            triggerAlert(symbol, digit, clusterCount) {
+                const message = `Digit ${digit} has formed ${clusterCount} clusters on ${symbol.replace('_', ' ')}`;
+                
+                // Voice alert
+                if (this.speechSynthesis) {
+                    const utterance = new SpeechSynthesisUtterance(message);
+                    utterance.rate = 0.8;
+                    utterance.pitch = 1.1;
+                    this.speechSynthesis.speak(utterance);
+                }
+                
+                // Add to alerts log
+                this.addAlert(message);
+                
+                console.log('ALERT:', message);
+            }
+
+            addAlert(message) {
+                const alertsLog = document.getElementById('alertsLog');
+                const alertItem = document.createElement('div');
+                alertItem.className = 'alert-item';
+                alertItem.innerHTML = `
+                    <div>${message}</div>
+                    <div class="alert-time">${new Date().toLocaleTimeString()}</div>
+                `;
+                
+                alertsLog.insertBefore(alertItem, alertsLog.firstChild);
+                
+                // Keep only last 10 alerts
+                while (alertsLog.children.length > 10) {
+                    alertsLog.removeChild(alertsLog.lastChild);
+                }
+            }
+
+            updateDigitStream(symbol) {
+                const streamEl = document.getElementById(`stream-${symbol}`);
+                const digits = this.data[symbol].digits;
+                const clusters = this.data[symbol].clusters;
+                
+                streamEl.innerHTML = '';
+                
+                // Create digit elements with cluster highlighting
+                digits.forEach((digit, index) => {
+                    const digitEl = document.createElement('div');
+                    digitEl.className = 'digit';
+                    digitEl.textContent = digit;
+                    
+                    // Check if this digit is part of a cluster
+                    const digitClusters = clusters[digit] || [];
+                    let maxClusterSize = 0;
+                    
+                    for (let cluster of digitClusters) {
+                        if (cluster.includes(index)) {
+                            maxClusterSize = Math.max(maxClusterSize, cluster.length);
+                        }
+                    }
+                    
+                    if (maxClusterSize >= 2) {
+                        digitEl.classList.add(`cluster-${Math.min(maxClusterSize, 6)}`);
+                    }
+                    
+                    streamEl.appendChild(digitEl);
+                });
+            }
+
+            updatePatternInfo(symbol) {
+                const patternEl = document.getElementById(`patterns-${symbol}`);
+                const patterns = this.data[symbol].patterns;
+                
+                patternEl.innerHTML = '';
+                
+                for (let digit = 0; digit <= 9; digit++) {
+                    const count = patterns[digit] || 0;
+                    if (count > 0) {
+                        const badge = document.createElement('div');
+                        badge.className = 'pattern-badge';
+                        badge.textContent = `${digit}: ${count} clusters`;
+                        patternEl.appendChild(badge);
+                    }
+                }
+            }
+        }
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', () => {
+            new VolatilityMonitor();
+        });
+    </script>
+</body>
+</html>
