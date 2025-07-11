@@ -401,6 +401,11 @@
                 this.alertThreshold = 4;
                 this.isConnected = false;
                 this.speechSynthesis = window.speechSynthesis;
+                this.reconnectTimer = null;
+                this.reconnectInterval = 20000; // 20 seconds
+                this.shouldReconnect = false;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 10;
                 
                 this.initializeData();
                 this.initializeUI();
@@ -466,11 +471,21 @@
                     return;
                 }
 
+                // Clear any existing reconnect timer
+                if (this.reconnectTimer) {
+                    clearTimeout(this.reconnectTimer);
+                    this.reconnectTimer = null;
+                }
+
+                this.shouldReconnect = true;
+                this.updateStatus('Connecting...', 'disconnected');
+
                 this.socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
 
                 this.socket.onopen = () => {
                     console.log('Connected to Deriv WebSocket');
                     this.isConnected = true;
+                    this.reconnectAttempts = 0; // Reset reconnect attempts on successful connection
                     this.updateStatus('Connected - Subscribing to volatilities...', 'connected');
                     document.getElementById('connectBtn').textContent = 'Disconnect';
                     
@@ -521,13 +536,29 @@
                 this.socket.onclose = (event) => {
                     console.log('Disconnected from Deriv WebSocket', event);
                     this.isConnected = false;
-                    this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
-                    document.getElementById('connectBtn').textContent = 'Connect';
+                    
+                    if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+                        this.reconnectAttempts++;
+                        this.updateStatus(`Disconnected - Reconnecting in 20s... (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`, 'disconnected');
+                        
+                        this.reconnectTimer = setTimeout(() => {
+                            console.log(`Reconnection attempt ${this.reconnectAttempts}`);
+                            this.connect();
+                        }, this.reconnectInterval);
+                    } else {
+                        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                            this.updateStatus('Max reconnection attempts reached - Click Connect to retry', 'disconnected');
+                        } else {
+                            this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
+                        }
+                        document.getElementById('connectBtn').textContent = 'Connect';
+                        this.shouldReconnect = false;
+                    }
                 };
 
                 this.socket.onerror = (error) => {
                     console.error('WebSocket error:', error);
-                    this.updateStatus('Connection error - Check console for details', 'disconnected');
+                    this.updateStatus('Connection error - Will retry automatically', 'disconnected');
                 };
             }
 
