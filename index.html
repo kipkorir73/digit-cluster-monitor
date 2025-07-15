@@ -334,6 +334,7 @@
             <div class="control-group">
                 <label for="alertThreshold">Alert Threshold:</label>
                 <select id="alertThreshold">
+                    <option value="2">2 Clusters</option>
                     <option value="3">3 Clusters</option>
                     <option value="4" selected>4 Clusters</option>
                     <option value="5">5 Clusters</option>
@@ -359,6 +360,10 @@
                 <div class="stats-card">
                     <h3>📊 Pattern Statistics</h3>
                     <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-number" id="clusters2">0</div>
+                            <div class="stat-label">Ended at 2</div>
+                        </div>
                         <div class="stat-item">
                             <div class="stat-number" id="clusters3">0</div>
                             <div class="stat-label">Ended at 3</div>
@@ -403,7 +408,7 @@
                 this.speechSynthesis = window.speechSynthesis;
                 this.reconnectInterval = null;
                 this.reconnectAttempts = 0;
-                this.maxReconnectAttempts = 999; // Essentially unlimited
+                this.maxReconnectAttempts = 999;
                 
                 this.initializeData();
                 this.initializeUI();
@@ -414,8 +419,8 @@
                 this.volatilities.forEach(vol => {
                     this.data[vol] = {
                         digits: [],
-                        patternTracking: {}, // Track active patterns for each digit
-                        clusterVisualization: [], // For UI display
+                        patternTracking: {},
+                        clusterVisualization: [],
                         lastTick: null
                     };
                     
@@ -424,7 +429,8 @@
                         this.data[vol].patternTracking[digit] = {
                             currentClusters: 0,
                             isActive: false,
-                            lastClusterEnd: -1
+                            lastClusterEnd: -1,
+                            expectedNextCluster: false
                         };
                     }
                 });
@@ -477,7 +483,7 @@
                     this.updateStatus('Connected - Subscribing to volatilities...', 'connected');
                     document.getElementById('connectBtn').textContent = 'Disconnect';
                     
-                    // Subscribe to all volatilities with proper format and req_id
+                    // Subscribe to all volatilities
                     this.volatilities.forEach((vol, index) => {
                         setTimeout(() => {
                             const subscribeMessage = {
@@ -487,42 +493,28 @@
                             };
                             console.log(`Subscribing to ${vol}:`, subscribeMessage);
                             this.socket.send(JSON.stringify(subscribeMessage));
-                        }, index * 200); // Stagger subscriptions by 200ms
+                        }, index * 200);
                     });
                 };
 
                 this.socket.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
-                        console.log('Received data:', data);
                         
                         if (data.tick) {
-                            console.log('Processing tick:', data.tick);
                             this.processTick(data.tick);
                         } else if (data.subscription) {
-                            console.log('Subscription confirmed:', data.subscription);
                             this.updateStatus('Connected - Monitoring all volatilities', 'connected');
                         } else if (data.error) {
                             console.error('API Error:', data.error);
                             this.updateStatus(`Error: ${data.error.message}`, 'disconnected');
-                        } else if (data.msg_type === 'tick') {
-                            console.log('Tick message received:', data);
-                            if (data.echo_req && data.echo_req.ticks) {
-                                // Handle tick data in different format
-                                this.processTick({
-                                    symbol: data.echo_req.ticks,
-                                    quote: data.tick ? data.tick.quote : null,
-                                    epoch: data.tick ? data.tick.epoch : null
-                                });
-                            }
                         }
                     } catch (e) {
-                        console.error('Error parsing message:', e, 'Raw data:', event.data);
+                        console.error('Error parsing message:', e);
                     }
                 };
 
-                this.socket.onclose = (event) => {
-                    console.log('Disconnected from Deriv WebSocket', event);
+                this.socket.onclose = () => {
                     this.isConnected = false;
                     this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
                     document.getElementById('connectBtn').textContent = 'Connect';
@@ -547,26 +539,20 @@
             }
 
             processTick(tick) {
-                console.log('Processing tick data:', tick);
-                
                 const symbol = tick.symbol;
                 let quote = tick.quote;
                 
                 if (!this.data[symbol]) {
-                    console.log(`Unknown symbol: ${symbol}`);
                     return;
                 }
 
                 if (!quote) {
-                    console.log('No quote in tick data:', tick);
                     return;
                 }
 
-                // Extract last digit - handle both integer and decimal quotes
+                // Extract last digit
                 const quoteStr = quote.toString();
                 const lastDigit = parseInt(quoteStr.slice(-1));
-                
-                console.log(`${symbol}: ${quote} -> digit ${lastDigit}`);
                 
                 // Update last tick display
                 const lastTickEl = document.getElementById(`lastTick-${symbol}`);
@@ -581,7 +567,7 @@
                 if (this.data[symbol].digits.length > 40) {
                     this.data[symbol].digits.shift();
                     
-                    // Update pattern tracking indices when we remove the first digit
+                    // Adjust pattern tracking indices
                     for (let digit = 0; digit <= 9; digit++) {
                         if (this.data[symbol].patternTracking[digit].lastClusterEnd > 0) {
                             this.data[symbol].patternTracking[digit].lastClusterEnd--;
@@ -589,9 +575,7 @@
                     }
                 }
                 
-                console.log(`${symbol} digit stream:`, this.data[symbol].digits);
-                
-                // Analyze patterns with the new correct logic
+                // Analyze patterns
                 this.analyzePatterns(symbol);
                 
                 // Update UI
@@ -601,160 +585,154 @@
 
             analyzePatterns(symbol) {
                 const digits = this.data[symbol].digits;
-                const currentIndex = digits.length - 1;
-                const currentDigit = digits[currentIndex];
                 
-                // Check if we have at least 2 digits
-                if (currentIndex < 1) return;
+                if (digits.length < 2) return;
                 
-                // Check all digits for pattern updates
+                // Find all clusters in the current digit stream
+                const clusters = this.findAllClusters(digits);
+                
+                // Process each digit's patterns
                 for (let digit = 0; digit <= 9; digit++) {
-                    this.updatePatternForDigit(symbol, digit, digits, currentIndex);
+                    this.updatePatternForDigitFixed(symbol, digit, clusters);
                 }
                 
-                // Update cluster visualization for UI
+                // Update visualization
                 this.updateClusterVisualization(symbol);
             }
 
-            updatePatternForDigit(symbol, digit, digits, currentIndex) {
-                const tracking = this.data[symbol].patternTracking[digit];
-                const currentDigit = digits[currentIndex];
+            findAllClusters(digits) {
+                const clusters = [];
                 
-                // Check if current position is part of a cluster
-                const isInCluster = this.isPositionInCluster(digits, currentIndex, digit);
-                const wasInCluster = currentIndex > 0 ? this.isPositionInCluster(digits, currentIndex - 1, digit) : false;
-                
-                // If we just completed a cluster (was in cluster, now not in cluster)
-                if (wasInCluster && !isInCluster) {
-                    // Find the cluster that just ended
-                    const clusterStart = this.findClusterStart(digits, currentIndex - 1, digit);
-                    const clusterEnd = currentIndex - 1;
-                    const clusterSize = clusterEnd - clusterStart + 1;
+                for (let digit = 0; digit <= 9; digit++) {
+                    const digitClusters = [];
+                    let i = 0;
                     
-                    if (clusterSize >= 2) {
-                        // We have a valid cluster
-                        if (!tracking.isActive) {
-                            // Start new pattern
-                            tracking.isActive = true;
-                            tracking.currentClusters = 1;
-                        } else {
-                            // Check if there was a solo digit between last cluster and this one
-                            const hasSoloDigitBetween = this.hasSoloDigitBetween(digits, tracking.lastClusterEnd, clusterStart, digit);
+                    while (i < digits.length) {
+                        if (digits[i] === digit) {
+                            let start = i;
+                            let end = i;
                             
-                            if (hasSoloDigitBetween) {
-                                // Pattern breaks - record the old pattern and start new one
-                                if (tracking.currentClusters >= 3) {
-                                    this.recordPatternEnd(tracking.currentClusters);
-                                }
-                                tracking.currentClusters = 1; // Reset to this cluster
-                            } else {
-                                // Pattern continues
-                                tracking.currentClusters++;
+                            // Find consecutive occurrences
+                            while (end + 1 < digits.length && digits[end + 1] === digit) {
+                                end++;
                             }
+                            
+                            // If cluster size >= 2, it's a valid cluster
+                            if (end - start + 1 >= 2) {
+                                digitClusters.push({
+                                    start: start,
+                                    end: end,
+                                    size: end - start + 1,
+                                    digit: digit
+                                });
+                            }
+                            
+                            i = end + 1;
+                        } else {
+                            i++;
+                        }
+                    }
+                    
+                    if (digitClusters.length > 0) {
+                        clusters.push({
+                            digit: digit,
+                            clusters: digitClusters
+                        });
+                    }
+                }
+                
+                return clusters;
+            }
+
+            updatePatternForDigitFixed(symbol, digit, allClusters) {
+                const tracking = this.data[symbol].patternTracking[digit];
+                const digits = this.data[symbol].digits;
+                
+                // Find clusters for this digit
+                const digitData = allClusters.find(d => d.digit === digit);
+                const clusters = digitData ? digitData.clusters : [];
+                
+                if (clusters.length === 0) {
+                    // No clusters for this digit
+                    if (tracking.isActive) {
+                        // Check if there's a solo digit that breaks the pattern
+                        const lastDigitIndex = digits.length - 1;
+                        if (digits[lastDigitIndex] === digit) {
+                            // Solo digit detected - end pattern
+                            if (tracking.currentClusters >= 2) {
+                                this.recordPatternEnd(tracking.currentClusters);
+                                console.log(`Pattern ended for digit ${digit} at ${tracking.currentClusters} clusters (solo digit)`);
+                            }
+                            tracking.isActive = false;
+                            tracking.currentClusters = 0;
+                            tracking.lastClusterEnd = -1;
+                        }
+                    }
+                    return;
+                }
+                
+                // Check if we have a new cluster or pattern progression
+                const latestCluster = clusters[clusters.length - 1];
+                
+                if (!tracking.isActive) {
+                    // Start new pattern
+                    tracking.isActive = true;
+                    tracking.currentClusters = clusters.length;
+                    tracking.lastClusterEnd = latestCluster.end;
+                    console.log(`New pattern started for digit ${digit} with ${clusters.length} clusters`);
+                } else {
+                    // Check if pattern continues or breaks
+                    const newClusterCount = clusters.length;
+                    
+                    if (newClusterCount > tracking.currentClusters) {
+                        // New cluster added
+                        const previousCluster = clusters[newClusterCount - 2];
+                        
+                        // Check if there's a solo digit between clusters
+                        if (this.hasSoloDigitBetweenClusters(digits, previousCluster.end, latestCluster.start, digit)) {
+                            // Pattern breaks - record old and start new
+                            if (tracking.currentClusters >= 2) {
+                                this.recordPatternEnd(tracking.currentClusters);
+                                console.log(`Pattern ended for digit ${digit} at ${tracking.currentClusters} clusters (solo break)`);
+                            }
+                            tracking.currentClusters = 1; // Start fresh with just the new cluster
+                        } else {
+                            // Pattern continues
+                            tracking.currentClusters = newClusterCount;
                         }
                         
-                        tracking.lastClusterEnd = clusterEnd;
+                        tracking.lastClusterEnd = latestCluster.end;
                         
-                        // Check if we should alert
+                        // Check for alert
                         if (tracking.currentClusters === this.alertThreshold) {
                             this.triggerAlert(symbol, digit, tracking.currentClusters);
                         }
                     }
                 }
-                
-                // Check if pattern should end due to solo digit
-                if (currentDigit === digit && !isInCluster) {
-                    // Solo digit detected
-                    if (tracking.isActive && tracking.currentClusters >= 3) {
-                        // Pattern ends
-                        this.recordPatternEnd(tracking.currentClusters);
-                        tracking.isActive = false;
-                        tracking.currentClusters = 0;
-                    }
-                }
             }
 
-            isPositionInCluster(digits, position, digit) {
-                if (position < 0 || position >= digits.length || digits[position] !== digit) {
-                    return false;
-                }
-                
-                // Check if this position is part of a cluster (2+ consecutive same digits)
-                const hasLeft = position > 0 && digits[position - 1] === digit;
-                const hasRight = position < digits.length - 1 && digits[position + 1] === digit;
-                
-                return hasLeft || hasRight;
-            }
-
-            findClusterStart(digits, position, digit) {
-                let start = position;
-                while (start > 0 && digits[start - 1] === digit) {
-                    start--;
-                }
-                return start;
-            }
-
-            hasSoloDigitBetween(digits, lastClusterEnd, newClusterStart, digit) {
-                for (let i = lastClusterEnd + 1; i < newClusterStart; i++) {
+            hasSoloDigitBetweenClusters(digits, clusterEnd, nextClusterStart, digit) {
+                for (let i = clusterEnd + 1; i < nextClusterStart; i++) {
                     if (digits[i] === digit) {
-                        // Found the digit, check if it's solo
-                        const hasLeft = i > 0 && digits[i - 1] === digit;
-                        const hasRight = i < digits.length - 1 && digits[i + 1] === digit;
-                        
-                        if (!hasLeft && !hasRight) {
-                            return true; // Solo digit found
-                        }
+                        return true; // Found solo digit
                     }
                 }
                 return false;
             }
 
-            updateClusterVisualization(symbol) {
-                const digits = this.data[symbol].digits;
-                const visualization = [];
-                
-                for (let i = 0; i < digits.length; i++) {
-                    const digit = digits[i];
-                    const clusterSize = this.getClusterSizeAtPosition(digits, i, digit);
-                    visualization.push({
-                        digit: digit,
-                        clusterSize: clusterSize
-                    });
-                }
-                
-                this.data[symbol].clusterVisualization = visualization;
-            }
-
-            getClusterSizeAtPosition(digits, position, digit) {
-                if (digits[position] !== digit) return 0;
-                
-                // Find the full cluster this position belongs to
-                let start = position;
-                let end = position;
-                
-                // Find start of cluster
-                while (start > 0 && digits[start - 1] === digit) {
-                    start--;
-                }
-                
-                // Find end of cluster
-                while (end < digits.length - 1 && digits[end + 1] === digit) {
-                    end++;
-                }
-                
-                const clusterSize = end - start + 1;
-                return clusterSize >= 2 ? clusterSize : 0;
-            }
-
             recordPatternEnd(clusterCount) {
-                if (clusterCount >= 3 && clusterCount <= 6) {
+                if (clusterCount >= 2 && clusterCount <= 6) {
                     this.stats[clusterCount]++;
-                    document.getElementById(`clusters${clusterCount}`).textContent = this.stats[clusterCount];
+                    const element = document.getElementById(`clusters${clusterCount}`);
+                    if (element) {
+                        element.textContent = this.stats[clusterCount];
+                        console.log(`Updated stats for ${clusterCount} clusters: ${this.stats[clusterCount]}`);
+                    }
                 }
             }
 
             triggerAlert(symbol, digit, clusterCount) {
-                const message = `Digit ${digit} has formed ${clusterCount} clusters on ${symbol.replace('_', ' ')}`;
+                const message = `🚨 Digit ${digit} reached ${clusterCount} clusters on ${symbol.replace('_', ' ')}`;
                 
                 // Voice alert
                 if (this.speechSynthesis) {
@@ -787,14 +765,48 @@
                 }
             }
 
+            updateClusterVisualization(symbol) {
+                const digits = this.data[symbol].digits;
+                const visualization = [];
+                
+                for (let i = 0; i < digits.length; i++) {
+                    const digit = digits[i];
+                    const clusterSize = this.getClusterSizeAtPosition(digits, i, digit);
+                    visualization.push({
+                        digit: digit,
+                        clusterSize: clusterSize
+                    });
+                }
+                
+                this.data[symbol].clusterVisualization = visualization;
+            }
+
+            getClusterSizeAtPosition(digits, position, digit) {
+                if (digits[position] !== digit) return 0;
+                
+                let start = position;
+                let end = position;
+                
+                // Find cluster boundaries
+                while (start > 0 && digits[start - 1] === digit) {
+                    start--;
+                }
+                
+                while (end < digits.length - 1 && digits[end + 1] === digit) {
+                    end++;
+                }
+                
+                const clusterSize = end - start + 1;
+                return clusterSize >= 2 ? clusterSize : 0;
+            }
+
             updateDigitStream(symbol) {
                 const streamEl = document.getElementById(`stream-${symbol}`);
                 const visualization = this.data[symbol].clusterVisualization;
                 
                 streamEl.innerHTML = '';
                 
-                // Create digit elements with cluster highlighting
-                visualization.forEach((item, index) => {
+                visualization.forEach((item) => {
                     const digitEl = document.createElement('div');
                     digitEl.className = 'digit';
                     digitEl.textContent = item.digit;
