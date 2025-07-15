@@ -546,13 +546,18 @@
                     return;
                 }
 
-                if (!quote) {
+                if (quote === null || quote === undefined) {
                     return;
                 }
 
-                // Extract last digit
+                // Extract last digit - handle all numeric values including 0
                 const quoteStr = quote.toString();
                 const lastDigit = parseInt(quoteStr.slice(-1));
+                
+                // Debug logging for digit 0
+                if (lastDigit === 0) {
+                    console.log(`Digit 0 detected for ${symbol}: quote=${quote}, lastDigit=${lastDigit}`);
+                }
                 
                 // Update last tick display
                 const lastTickEl = document.getElementById(`lastTick-${symbol}`);
@@ -827,7 +832,8 @@
                 
                 for (let digit = 0; digit <= 9; digit++) {
                     const count = tracking[digit].currentClusters;
-                    if (count > 0 && tracking[digit].isActive) {
+                    // Fixed condition: show badge if there are clusters AND pattern is active
+                    if (count >= 1 && tracking[digit].isActive) {
                         const badge = document.createElement('div');
                         badge.className = 'pattern-badge';
                         badge.textContent = `${digit}: ${count} clusters`;
@@ -842,5 +848,3 @@
             new VolatilityMonitor();
         });
     </script>
-</body>
-</html>
