@@ -805,24 +805,27 @@
                 return clusterSize >= 2 ? clusterSize : 0;
             }
 
-            updateDigitStream(symbol) {
-                const streamEl = document.getElementById(`stream-${symbol}`);
-                const visualization = this.data[symbol].clusterVisualization;
-                
-                streamEl.innerHTML = '';
-                
-                visualization.forEach((item) => {
-                    const digitEl = document.createElement('div');
-                    digitEl.className = 'digit';
-                    digitEl.textContent = item.digit;
-                    
-                    if (item.clusterSize >= 2) {
-                        digitEl.classList.add(`cluster-${Math.min(item.clusterSize, 6)}`);
-                    }
-                    
-                    streamEl.appendChild(digitEl);
-                });
-            }
+updateDigitStream(symbol) {
+    const streamEl = document.getElementById(`stream-${symbol}`);
+    const visualization = this.data[symbol].clusterVisualization;
+
+    streamEl.innerHTML = '';
+
+    visualization.forEach((item) => {
+        const digitEl = document.createElement('div');
+        digitEl.className = 'digit';
+
+        // ✅ Always convert digit to string so 0 shows properly
+        digitEl.textContent = String(item.digit);
+
+        // ✅ Avoid skipping cluster class if clusterSize is 0 (aka falsy)
+        if (item.clusterSize !== 0 && item.clusterSize >= 2) {
+            digitEl.classList.add(`cluster-${Math.min(item.clusterSize, 6)}`);
+        }
+
+        streamEl.appendChild(digitEl);
+    });
+}
 
             updatePatternInfo(symbol) {
                 const patternEl = document.getElementById(`patterns-${symbol}`);
