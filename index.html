@@ -110,6 +110,35 @@
             background: rgba(244, 67, 54, 0.3);
         }
 
+        .status.reconnecting {
+            background: rgba(255, 152, 0, 0.3);
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(76, 175, 80, 0.9);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            font-weight: bold;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
         .main-content {
             display: grid;
             grid-template-columns: 1fr 300px;
@@ -409,10 +438,20 @@
                 this.reconnectInterval = null;
                 this.reconnectAttempts = 0;
                 this.maxReconnectAttempts = 999;
+                this.hasConnectedBefore = false; // Track if we've connected before
+                this.manualDisconnect = false; // Track if disconnect was manual
+                this.reconnectDelay = 1000; // Start with 1 second
+                this.maxReconnectDelay = 30000; // Max 30 seconds
+                this.appId = '';
                 
                 this.initializeData();
                 this.initializeUI();
                 this.bindEvents();
+                
+                // Cleanup on page unload
+                window.addEventListener('beforeunload', () => {
+                    this.cleanup();
+                });
             }
 
             initializeData() {
@@ -433,6 +472,35 @@
                             expectedNextCluster: false
                         };
                     }
+                });
+            }
+
+            // Clear volatility data while preserving stats
+            clearVolatilityData() {
+                console.log('Clearing volatility data for reconnect...');
+                this.volatilities.forEach(vol => {
+                    this.data[vol].digits = [];
+                    this.data[vol].clusterVisualization = [];
+                    this.data[vol].lastTick = null;
+                    
+                    // Reset pattern tracking
+                    for (let digit = 0; digit <= 9; digit++) {
+                        this.data[vol].patternTracking[digit] = {
+                            currentClusters: 0,
+                            isActive: false,
+                            lastClusterEnd: -1,
+                            expectedNextCluster: false
+                        };
+                    }
+                    
+                    // Clear UI for this volatility
+                    const streamEl = document.getElementById(`stream-${vol}`);
+                    const patternEl = document.getElementById(`patterns-${vol}`);
+                    const lastTickEl = document.getElementById(`lastTick-${vol}`);
+                    
+                    if (streamEl) streamEl.innerHTML = '';
+                    if (patternEl) patternEl.innerHTML = '';
+                    if (lastTickEl) lastTickEl.textContent = '--';
                 });
             }
 
@@ -468,6 +536,24 @@
                 });
             }
 
+            showToast(message, type = 'success') {
+                const toast = document.createElement('div');
+                toast.className = 'toast';
+                toast.textContent = message;
+                
+                if (type === 'error') {
+                    toast.style.background = 'rgba(244, 67, 54, 0.9)';
+                }
+                
+                document.body.appendChild(toast);
+                
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 3000);
+            }
+
             connect() {
                 const appId = document.getElementById('appIdInput').value.trim();
                 if (!appId) {
@@ -475,24 +561,63 @@
                     return;
                 }
 
-                this.socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+                this.appId = appId;
+                this.manualDisconnect = false;
+                this.createWebSocket();
+            }
+
+            createWebSocket() {
+                // Clean up existing socket
+                if (this.socket) {
+                    this.socket.onopen = null;
+                    this.socket.onmessage = null;
+                    this.socket.onclose = null;
+                    this.socket.onerror = null;
+                    this.socket.close();
+                }
+
+                this.socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${this.appId}`);
 
                 this.socket.onopen = () => {
                     console.log('Connected to Deriv WebSocket');
+                    
+                    const isReconnect = this.hasConnectedBefore;
+                    this.hasConnectedBefore = true;
+                    
+                    if (isReconnect) {
+                        // This is a reconnect - clear volatility data
+                        this.clearVolatilityData();
+                        this.showToast('Reconnected! 🔄', 'success');
+                        console.log('Reconnected to WebSocket');
+                    } else {
+                        console.log('Initial connection established');
+                    }
+                    
                     this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    this.reconnectDelay = 1000; // Reset delay
+                    
+                    // Clear any existing reconnect interval
+                    if (this.reconnectInterval) {
+                        clearInterval(this.reconnectInterval);
+                        this.reconnectInterval = null;
+                    }
+                    
                     this.updateStatus('Connected - Subscribing to volatilities...', 'connected');
                     document.getElementById('connectBtn').textContent = 'Disconnect';
                     
                     // Subscribe to all volatilities
                     this.volatilities.forEach((vol, index) => {
                         setTimeout(() => {
-                            const subscribeMessage = {
-                                ticks: vol,
-                                subscribe: 1,
-                                req_id: index + 1
-                            };
-                            console.log(`Subscribing to ${vol}:`, subscribeMessage);
-                            this.socket.send(JSON.stringify(subscribeMessage));
+                            if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                                const subscribeMessage = {
+                                    ticks: vol,
+                                    subscribe: 1,
+                                    req_id: index + 1
+                                };
+                                console.log(`Subscribing to ${vol}:`, subscribeMessage);
+                                this.socket.send(JSON.stringify(subscribeMessage));
+                            }
                         }, index * 200);
                     });
                 };
@@ -514,21 +639,87 @@
                     }
                 };
 
-                this.socket.onclose = () => {
+                this.socket.onclose = (event) => {
+                    console.log('WebSocket closed:', event.code, event.reason);
                     this.isConnected = false;
-                    this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
-                    document.getElementById('connectBtn').textContent = 'Connect';
+                    
+                    if (!this.manualDisconnect && this.hasConnectedBefore) {
+                        // Automatic reconnect
+                        this.attemptReconnect();
+                    } else {
+                        // Manual disconnect or first connection failure
+                        this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
+                        document.getElementById('connectBtn').textContent = 'Connect';
+                    }
                 };
 
                 this.socket.onerror = (error) => {
                     console.error('WebSocket error:', error);
-                    this.updateStatus('Connection error - Check console for details', 'disconnected');
+                    if (!this.hasConnectedBefore) {
+                        this.updateStatus('Connection error - Check console for details', 'disconnected');
+                    }
                 };
             }
 
+            attemptReconnect() {
+                if (this.manualDisconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
+                    document.getElementById('connectBtn').textContent = 'Connect';
+                    return;
+                }
+
+                this.reconnectAttempts++;
+                this.updateStatus(`Reconnecting... (attempt ${this.reconnectAttempts})`, 'reconnecting');
+                
+                console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${this.reconnectDelay}ms`);
+                
+                this.reconnectInterval = setTimeout(() => {
+                    if (!this.manualDisconnect) {
+                        this.createWebSocket();
+                        
+                        // Exponential backoff with jitter
+                        this.reconnectDelay = Math.min(
+                            this.reconnectDelay * 1.5 + Math.random() * 1000,
+                            this.maxReconnectDelay
+                        );
+                    }
+                }, this.reconnectDelay);
+            }
+
             disconnect() {
+                this.manualDisconnect = true;
+                
+                // Clear reconnect interval
+                if (this.reconnectInterval) {
+                    clearInterval(this.reconnectInterval);
+                    this.reconnectInterval = null;
+                }
+                
                 if (this.socket) {
                     this.socket.close();
+                }
+                
+                this.isConnected = false;
+                this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
+                document.getElementById('connectBtn').textContent = 'Connect';
+            }
+
+            cleanup() {
+                console.log('Cleaning up WebSocket connections...');
+                this.manualDisconnect = true;
+                
+                if (this.reconnectInterval) {
+                    clearInterval(this.reconnectInterval);
+                    this.reconnectInterval = null;
+                }
+                
+                if (this.socket) {
+                    this.socket.onopen = null;
+                    this.socket.onmessage = null;
+                    this.socket.onclose = null;
+                    this.socket.onerror = null;
+                    this.socket.close();
+                    this.socket = null;
                 }
             }
 
@@ -675,179 +866,3 @@
                     }
                     return;
                 }
-                
-                // Check if we have a new cluster or pattern progression
-                const latestCluster = clusters[clusters.length - 1];
-                
-                if (!tracking.isActive) {
-                    // Start new pattern
-                    tracking.isActive = true;
-                    tracking.currentClusters = clusters.length;
-                    tracking.lastClusterEnd = latestCluster.end;
-                    console.log(`New pattern started for digit ${digit} with ${clusters.length} clusters`);
-                } else {
-                    // Check if pattern continues or breaks
-                    const newClusterCount = clusters.length;
-                    
-                    if (newClusterCount > tracking.currentClusters) {
-                        // New cluster added
-                        const previousCluster = clusters[newClusterCount - 2];
-                        
-                        // Check if there's a solo digit between clusters
-                        if (this.hasSoloDigitBetweenClusters(digits, previousCluster.end, latestCluster.start, digit)) {
-                            // Pattern breaks - record old and start new
-                            if (tracking.currentClusters >= 2) {
-                                this.recordPatternEnd(tracking.currentClusters);
-                                console.log(`Pattern ended for digit ${digit} at ${tracking.currentClusters} clusters (solo break)`);
-                            }
-                            tracking.currentClusters = 1; // Start fresh with just the new cluster
-                        } else {
-                            // Pattern continues
-                            tracking.currentClusters = newClusterCount;
-                        }
-                        
-                        tracking.lastClusterEnd = latestCluster.end;
-                        
-                        // Check for alert
-                        if (tracking.currentClusters === this.alertThreshold) {
-                            this.triggerAlert(symbol, digit, tracking.currentClusters);
-                        }
-                    }
-                }
-            }
-
-            hasSoloDigitBetweenClusters(digits, clusterEnd, nextClusterStart, digit) {
-                for (let i = clusterEnd + 1; i < nextClusterStart; i++) {
-                    if (digits[i] === digit) {
-                        return true; // Found solo digit
-                    }
-                }
-                return false;
-            }
-
-            recordPatternEnd(clusterCount) {
-                if (clusterCount >= 2 && clusterCount <= 6) {
-                    this.stats[clusterCount]++;
-                    const element = document.getElementById(`clusters${clusterCount}`);
-                    if (element) {
-                        element.textContent = this.stats[clusterCount];
-                        console.log(`Updated stats for ${clusterCount} clusters: ${this.stats[clusterCount]}`);
-                    }
-                }
-            }
-
-            triggerAlert(symbol, digit, clusterCount) {
-                const message = `🚨 Digit ${digit} reached ${clusterCount} clusters on ${symbol.replace('_', ' ')}`;
-                
-                // Voice alert
-                if (this.speechSynthesis) {
-                    const utterance = new SpeechSynthesisUtterance(message);
-                    utterance.rate = 0.8;
-                    utterance.pitch = 1.1;
-                    this.speechSynthesis.speak(utterance);
-                }
-                
-                // Add to alerts log
-                this.addAlert(message);
-                
-                console.log('ALERT:', message);
-            }
-
-            addAlert(message) {
-                const alertsLog = document.getElementById('alertsLog');
-                const alertItem = document.createElement('div');
-                alertItem.className = 'alert-item';
-                alertItem.innerHTML = `
-                    <div>${message}</div>
-                    <div class="alert-time">${new Date().toLocaleTimeString()}</div>
-                `;
-                
-                alertsLog.insertBefore(alertItem, alertsLog.firstChild);
-                
-                // Keep only last 10 alerts
-                while (alertsLog.children.length > 10) {
-                    alertsLog.removeChild(alertsLog.lastChild);
-                }
-            }
-
-            updateClusterVisualization(symbol) {
-                const digits = this.data[symbol].digits;
-                const visualization = [];
-                
-                for (let i = 0; i < digits.length; i++) {
-                    const digit = digits[i];
-                    const clusterSize = this.getClusterSizeAtPosition(digits, i, digit);
-                    visualization.push({
-                        digit: digit,
-                        clusterSize: clusterSize
-                    });
-                }
-                
-                this.data[symbol].clusterVisualization = visualization;
-            }
-
-            getClusterSizeAtPosition(digits, position, digit) {
-                if (digits[position] !== digit) return 0;
-                
-                let start = position;
-                let end = position;
-                
-                // Find cluster boundaries
-                while (start > 0 && digits[start - 1] === digit) {
-                    start--;
-                }
-                
-                while (end < digits.length - 1 && digits[end + 1] === digit) {
-                    end++;
-                }
-                
-                const clusterSize = end - start + 1;
-                return clusterSize >= 2 ? clusterSize : 0;
-            }
-
-updateDigitStream(symbol) {
-    const streamEl = document.getElementById(`stream-${symbol}`);
-    const visualization = this.data[symbol].clusterVisualization;
-
-    streamEl.innerHTML = '';
-
-    visualization.forEach((item) => {
-        const digitEl = document.createElement('div');
-        digitEl.className = 'digit';
-
-        // ✅ Always convert digit to string so 0 shows properly
-        digitEl.textContent = String(item.digit);
-
-        // ✅ Avoid skipping cluster class if clusterSize is 0 (aka falsy)
-        if (item.clusterSize !== 0 && item.clusterSize >= 2) {
-            digitEl.classList.add(`cluster-${Math.min(item.clusterSize, 6)}`);
-        }
-
-        streamEl.appendChild(digitEl);
-    });
-}
-
-            updatePatternInfo(symbol) {
-                const patternEl = document.getElementById(`patterns-${symbol}`);
-                const tracking = this.data[symbol].patternTracking;
-                
-                patternEl.innerHTML = '';
-                
-                for (let digit = 0; digit <= 9; digit++) {
-                    const count = tracking[digit].currentClusters;
-                    // Fixed condition: show badge if there are clusters AND pattern is active
-                    if (count >= 1 && tracking[digit].isActive) {
-                        const badge = document.createElement('div');
-                        badge.className = 'pattern-badge';
-                        badge.textContent = `${digit}: ${count} clusters`;
-                        patternEl.appendChild(badge);
-                    }
-                }
-            }
-        }
-
-        // Initialize the application
-        document.addEventListener('DOMContentLoaded', () => {
-            new VolatilityMonitor();
-        });
-    </script>
