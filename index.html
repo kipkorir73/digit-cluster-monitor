@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Real-time volatility cluster monitor for Deriv platform">
     <title>Deriv Volatility Cluster Monitor</title>
     <style>
         * {
@@ -60,37 +61,31 @@
             text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
         }
 
-        input {
+        input, select, button {
             padding: 10px 15px;
             border: none;
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.2);
             color: white;
             font-size: 16px;
-            width: 200px;
             transition: all 0.3s ease;
         }
 
-        input:focus {
+        input:focus, select:focus, button:focus {
             background: rgba(255, 255, 255, 0.3);
-            outline: none;
+            outline: 2px solid #ffd700;
             box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
-        }
-
-        select, button {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            font-size: 16px;
-            cursor: pointer;
-            transition: all 0.3s ease;
         }
 
         select:hover, button:hover {
             background: rgba(255, 255, 255, 0.3);
             transform: translateY(-2px);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .status {
@@ -282,7 +277,6 @@
             font-size: 0.8em;
         }
 
-        /* Toast styles */
         .toast-container {
             position: fixed;
             bottom: 20px;
@@ -308,7 +302,6 @@
         .toast.show {
             opacity: 1;
         }
-
 
         @media (max-width: 1200px) {
             .main-content {
@@ -347,11 +340,12 @@
         <div class="controls">
             <div class="control-group">
                 <label for="appIdInput">App ID:</label>
-                <input type="text" id="appIdInput" placeholder="Enter your Deriv app_id" value="1089" style="padding: 10px 15px; border: none; border-radius: 8px; background: rgba(255, 255, 255, 0.2); color: white; font-size: 16px; width: 200px;">
+                <input type="text" id="appIdInput" placeholder="Enter your Deriv app_id" value="1089" aria-describedby="appIdHelp">
+                <small id="appIdHelp" class="sr-only">Enter your Deriv API application ID</small>
             </div>
             <div class="control-group">
                 <label for="volatilitySelect">Display Volatility:</label>
-                <select id="volatilitySelect">
+                <select id="volatilitySelect" aria-label="Select volatility index">
                     <option value="R_10">Volatility 10</option>
                     <option value="R_25" selected>Volatility 25</option>
                     <option value="R_50">Volatility 50</option>
@@ -361,7 +355,7 @@
             </div>
             <div class="control-group">
                 <label for="alertThreshold">Alert Threshold:</label>
-                <select id="alertThreshold">
+                <select id="alertThreshold" aria-label="Select alert threshold">
                     <option value="2">2 Clusters</option>
                     <option value="3">3 Clusters</option>
                     <option value="4" selected>4 Clusters</option>
@@ -371,17 +365,20 @@
             </div>
             <div class="control-group">
                 <label>&nbsp;</label>
-                <button id="connectBtn">Connect</button>
+                <button id="connectBtn" aria-label="Connect or disconnect from WebSocket">Connect</button>
+            </div>
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button id="resetStatsBtn" aria-label="Reset pattern statistics">Reset Stats</button>
             </div>
         </div>
 
-        <div class="status disconnected" id="status">
+        <div class="status disconnected" id="status" role="status">
             Disconnected - Click Connect to start monitoring
         </div>
 
         <div class="main-content">
-            <div class="volatility-monitors" id="volatilityMonitors">
-                </div>
+            <div class="volatility-monitors" id="volatilityMonitors"></div>
 
             <div class="sidebar">
                 <div class="stats-card">
@@ -412,9 +409,9 @@
 
                 <div class="stats-card">
                     <h3>🔔 Recent Alerts</h3>
-                    <div class="alerts-log" id="alertsLog">
+                    <div class="alerts-log" id="alertsLog" aria-live="polite">
                         <div class="alert-item">
-                            <div>System ready - waiting for patterns...</div>
+                            <div>System ready - waiting for pats</div>
                             <div class="alert-time">Ready to monitor</div>
                         </div>
                     </div>
@@ -422,7 +419,7 @@
             </div>
         </div>
     </div>
-    <div class="toast-container" id="toastContainer"></div>
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
     <script>
         class VolatilityMonitor {
@@ -434,15 +431,17 @@
                 this.alertThreshold = 4;
                 this.isConnected = false;
                 this.speechSynthesis = window.speechSynthesis;
-                this.reconnectTimeout = null; // Stores the setTimeout ID for reconnect
-                this.reconnectDelay = 1000; // Initial delay for reconnect (1 second)
-                this.maxReconnectDelay = 30000; // Max delay for reconnect (30 seconds)
-                this.reconnectMultiplier = 1.5; // Multiplier for exponential backoff
-                this.isFirstConnection = true; // Flag to detect first connection
+                this.reconnectTimeout = null;
+                this.reconnectDelay = 1000;
+                this.maxReconnectDelay = 30000;
+                this.reconnectMultiplier = 1.5;
+                this.isFirstConnection = true;
+                this.debounceTimeout = null;
 
                 this.initializeData();
                 this.initializeUI();
                 this.bindEvents();
+                this.loadSettings();
             }
 
             initializeData() {
@@ -454,7 +453,6 @@
                         lastTick: null
                     };
                     
-                    // Initialize pattern tracking for each digit (0-9)
                     for (let digit = 0; digit <= 9; digit++) {
                         this.data[vol].patternTracking[digit] = {
                             currentClusters: 0,
@@ -472,20 +470,22 @@
                 this.volatilities.forEach(vol => {
                     const card = document.createElement('div');
                     card.className = 'volatility-card';
+                    card.setAttribute('aria-label', `Volatility monitor for ${vol.replace('_', ' ')}`);
                     card.innerHTML = `
                         <div class="volatility-header">
                             <div class="volatility-title">${vol.replace('_', ' ')}</div>
-                            <div class="last-tick" id="lastTick-${vol}">--</div>
+                            <div class="last-tick" id="lastTick-${vol}" aria-live="polite">--</div>
                         </div>
-                        <div class="digit-stream" id="stream-${vol}"></div>
-                        <div class="pattern-info" id="patterns-${vol}"></div>
+                        <div class="digit-stream" id="stream-${vol}" aria-label="Digit stream for ${vol.replace('_', ' ')}"></div>
+                        <div class="pattern-info" id="patterns-${vol}" aria-label="Pattern information for ${vol.replace('_', ' ')}"></div>
                     `;
                     monitorsContainer.appendChild(card);
                 });
             }
 
             bindEvents() {
-                document.getElementById('connectBtn').addEventListener('click', () => {
+                const connectBtn = document.getElementById('connectBtn');
+                connectBtn.addEventListener('click', () => {
                     if (this.isConnected) {
                         this.disconnect();
                     } else {
@@ -495,46 +495,101 @@
 
                 document.getElementById('alertThreshold').addEventListener('change', (e) => {
                     this.alertThreshold = parseInt(e.target.value);
+                    this.saveSettings();
                 });
+
+                document.getElementById('appIdInput').addEventListener('change', () => {
+                    this.saveSettings();
+                });
+
+                document.getElementById('resetStatsBtn').addEventListener('click', () => {
+                    this.resetStats();
+                });
+
+                // Debounced window resize handler
+                window.addEventListener('resize', () => {
+                    clearTimeout(this.debounceTimeout);
+                    this.debounceTimeout = setTimeout(() => this.updateDigitStreamAll(), 100);
+                });
+            }
+
+            loadSettings() {
+                try {
+                    const settings = JSON.parse(localStorage.getItem('volatilityMonitorSettings') || '{}');
+                    if (settings.appId) {
+                        document.getElementById('appIdInput').value = settings.appId;
+                    }
+                    if (settings.alertThreshold) {
+                        document.getElementById('alertThreshold').value = settings.alertThreshold;
+                        this.alertThreshold = parseInt(settings.alertThreshold);
+                    }
+                } catch (e) {
+                    console.error('Error loading settings:', e);
+                }
+            }
+
+            saveSettings() {
+                try {
+                    const settings = {
+                        appId: document.getElementById('appIdInput').value.trim(),
+                        alertThreshold: document.getElementById('alertThreshold').value
+                    };
+                    localStorage.setItem('volatilityMonitorSettings', JSON.stringify(settings));
+                } catch (e) {
+                    console.error('Error saving settings:', e);
+                }
+            }
+
+            resetStats() {
+                Object.keys(this.stats).forEach(key => {
+                    this.stats[key] = 0;
+                    const element = document.getElementById(`clusters${key}`);
+                    if (element) element.textContent = '0';
+                });
+                this.showToast('Statistics reset');
+                this.addAlert('Pattern statistics reset');
             }
 
             connect(isReconnect = false) {
                 const appId = document.getElementById('appIdInput').value.trim();
-                if (!appId) {
-                    this.updateStatus('Please enter a valid App ID', 'disconnected');
+                if (!appId || !/^\d+$/.test(appId)) {
+                    this.updateStatus('Please enter a valid numeric App ID', 'disconnected');
+                    this.showToast('Invalid App ID');
                     return;
                 }
 
-                // Clear any existing reconnect timeout
                 if (this.reconnectTimeout) {
                     clearTimeout(this.reconnectTimeout);
                     this.reconnectTimeout = null;
                 }
 
-                // If this is a reconnect and not the first connection, clear live digit data
                 if (isReconnect && !this.isFirstConnection) {
                     this.clearLiveDigitData();
-                    this.showToast("Reconnected");
-                    this.addAlert("Reconnected to WebSocket");
-                    console.log("WebSocket reconnected. Live digit data cleared.");
+                    this.showToast('Reconnected to WebSocket');
+                    this.addAlert('Reconnected to WebSocket');
                 }
-                
-                // Reset first connection flag after the initial connect attempt
+
                 if (!isReconnect) {
                     this.isFirstConnection = true;
                 }
 
-                this.socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+                try {
+                    this.socket = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+                } catch (e) {
+                    console.error('WebSocket creation error:', e);
+                    this.updateStatus('Failed to create WebSocket connection', 'disconnected');
+                    return;
+                }
 
                 this.socket.onopen = () => {
                     console.log('Connected to Deriv WebSocket');
                     this.isConnected = true;
                     this.updateStatus('Connected - Subscribing to volatilities...', 'connected');
                     document.getElementById('connectBtn').textContent = 'Disconnect';
-                    this.reconnectDelay = 1000; // Reset reconnect delay on successful connection
-                    this.isFirstConnection = false; // Mark that initial connection has occurred
-                    
-                    // Subscribe to all volatilities
+                    document.getElementById('connectBtn').setAttribute('aria-label', 'Disconnect from WebSocket');
+                    this.reconnectDelay = 1000;
+                    this.isFirstConnection = false;
+
                     this.volatilities.forEach((vol, index) => {
                         setTimeout(() => {
                             const subscribeMessage = {
@@ -542,8 +597,11 @@
                                 subscribe: 1,
                                 req_id: index + 1
                             };
-                            console.log(`Subscribing to ${vol}:`, subscribeMessage);
-                            this.socket.send(JSON.stringify(subscribeMessage));
+                            try {
+                                this.socket.send(JSON.stringify(subscribeMessage));
+                            } catch (e) {
+                                console.error(`Error subscribing to ${vol}:`, e);
+                            }
                         }, index * 200);
                     });
                 };
@@ -559,9 +617,11 @@
                         } else if (data.error) {
                             console.error('API Error:', data.error);
                             this.updateStatus(`Error: ${data.error.message}`, 'disconnected');
+                            this.showToast(`API Error: ${data.error.message}`);
                         }
                     } catch (e) {
                         console.error('Error parsing message:', e);
+                        this.showToast('Error processing data');
                     }
                 };
 
@@ -569,10 +629,10 @@
                     console.log('WebSocket connection closed.');
                     this.isConnected = false;
                     this.updateStatus('Disconnected - Attempting to reconnect...', 'disconnected');
-                    document.getElementById('connectBtn').textContent = 'Connect'; // Change button text back
+                    document.getElementById('connectBtn').textContent = 'Connect';
+                    document.getElementById('connectBtn').setAttribute('aria-label', 'Connect to WebSocket');
 
-                    // Attempt to reconnect if not explicitly disconnected by user
-                    if (this.reconnectTimeout === null) { // Only set reconnect if not already scheduled
+                    if (this.reconnectTimeout === null) {
                         this.scheduleReconnect();
                     }
                 };
@@ -580,41 +640,45 @@
                 this.socket.onerror = (error) => {
                     console.error('WebSocket error:', error);
                     this.updateStatus('Connection error - Check console for details', 'disconnected');
-                    // onclose will be called after onerror, so reconnect logic is handled there
+                    this.showToast('WebSocket connection error');
                 };
             }
 
             scheduleReconnect() {
                 this.reconnectTimeout = setTimeout(() => {
                     console.log(`Attempting to reconnect in ${this.reconnectDelay / 1000} seconds...`);
-                    this.connect(true); // Call connect with isReconnect flag
+                    this.connect(true);
                     this.reconnectDelay = Math.min(this.reconnectDelay * this.reconnectMultiplier, this.maxReconnectDelay);
                 }, this.reconnectDelay);
             }
 
             disconnect() {
                 if (this.socket) {
-                    // Prevent automatic reconnect when user explicitly disconnects
                     if (this.reconnectTimeout) {
                         clearTimeout(this.reconnectTimeout);
                         this.reconnectTimeout = null;
                     }
-                    this.socket.close();
-                    this.socket = null; // Clear the socket instance
+                    try {
+                        this.socket.close();
+                    } catch (e) {
+                        console.error('Error closing WebSocket:', e);
+                    }
+                    this.socket = null;
                     this.isConnected = false;
                     this.updateStatus('Disconnected - Click Connect to start monitoring', 'disconnected');
                     document.getElementById('connectBtn').textContent = 'Connect';
-                    this.isFirstConnection = true; // Reset for a fresh start
-                    console.log("User explicitly disconnected WebSocket.");
+                    document.getElementById('connectBtn').setAttribute('aria-label', 'Connect to WebSocket');
+                    this.isFirstConnection = true;
+                    this.showToast('Disconnected from WebSocket');
+                    this.addAlert('Disconnected from WebSocket');
                 }
             }
 
             clearLiveDigitData() {
                 this.volatilities.forEach(vol => {
-                    this.data[vol].digits = []; // Clear digit array
-                    this.data[vol].clusterVisualization = []; // Clear visualization data
-                    this.data[vol].lastTick = null; // Clear last tick display
-                    // Reset pattern tracking for each digit
+                    this.data[vol].digits = [];
+                    this.data[vol].clusterVisualization = [];
+                    this.data[vol].lastTick = null;
                     for (let digit = 0; digit <= 9; digit++) {
                         this.data[vol].patternTracking[digit] = {
                             currentClusters: 0,
@@ -623,12 +687,10 @@
                             expectedNextCluster: false
                         };
                     }
-                    // Update UI to reflect cleared data
                     this.updateDigitStream(vol);
                     this.updatePatternInfo(vol);
                     document.getElementById(`lastTick-${vol}`).textContent = '--';
                 });
-                console.log('Live digit data cleared for all volatilities.');
             }
 
             showToast(message, duration = 3000) {
@@ -636,17 +698,17 @@
                 const toast = document.createElement('div');
                 toast.className = 'toast';
                 toast.textContent = message;
+                toast.setAttribute('role', 'alert');
                 toastContainer.appendChild(toast);
 
-                // Trigger reflow to ensure animation plays
-                void toast.offsetWidth; 
+                void toast.offsetWidth;
                 toast.classList.add('show');
 
                 setTimeout(() => {
                     toast.classList.remove('show');
                     toast.addEventListener('transitionend', () => {
                         toast.remove();
-                    });
+                    }, { once: true });
                 }, duration);
             }
 
@@ -660,37 +722,27 @@
                 const symbol = tick.symbol;
                 let quote = tick.quote;
                 
-                if (!this.data[symbol]) {
+                if (!this.data[symbol] || quote == null) {
                     return;
                 }
 
-                if (quote === null || quote === undefined) {
-                    return;
-                }
-
-                // Extract last digit - handle all numeric values including 0
                 const quoteStr = quote.toString();
                 const lastDigit = parseInt(quoteStr.slice(-1));
                 
-                // Debug logging for digit 0
-                if (lastDigit === 0) {
-                    console.log(`Digit 0 detected for ${symbol}: quote=${quote}, lastDigit=${lastDigit}`);
+                if (isNaN(lastDigit)) {
+                    console.warn(`Invalid digit for ${symbol}: quote=${quote}`);
+                    return;
                 }
-                
-                // Update last tick display
+
                 const lastTickEl = document.getElementById(`lastTick-${symbol}`);
                 if (lastTickEl) {
                     lastTickEl.textContent = typeof quote === 'number' ? quote.toFixed(5) : quote;
                 }
                 
-                // Add digit to stream
                 this.data[symbol].digits.push(lastDigit);
                 
-                // Keep only last 40 digits
                 if (this.data[symbol].digits.length > 40) {
                     this.data[symbol].digits.shift();
-                    
-                    // Adjust pattern tracking indices
                     for (let digit = 0; digit <= 9; digit++) {
                         if (this.data[symbol].patternTracking[digit].lastClusterEnd > 0) {
                             this.data[symbol].patternTracking[digit].lastClusterEnd--;
@@ -698,10 +750,7 @@
                     }
                 }
                 
-                // Analyze patterns
                 this.analyzePatterns(symbol);
-                
-                // Update UI
                 this.updateDigitStream(symbol);
                 this.updatePatternInfo(symbol);
             }
@@ -711,15 +760,12 @@
                 
                 if (digits.length < 2) return;
                 
-                // Find all clusters in the current digit stream
                 const clusters = this.findAllClusters(digits);
                 
-                // Process each digit's patterns
                 for (let digit = 0; digit <= 9; digit++) {
                     this.updatePatternForDigitFixed(symbol, digit, clusters);
                 }
                 
-                // Update visualization
                 this.updateClusterVisualization(symbol);
             }
 
@@ -735,12 +781,10 @@
                             let start = i;
                             let end = i;
                             
-                            // Find consecutive occurrences
                             while (end + 1 < digits.length && digits[end + 1] === digit) {
                                 end++;
                             }
                             
-                            // If cluster size >= 2, it's a valid cluster
                             if (end - start + 1 >= 2) {
                                 digitClusters.push({
                                     start: start,
@@ -770,21 +814,15 @@
             updatePatternForDigitFixed(symbol, digit, allClusters) {
                 const tracking = this.data[symbol].patternTracking[digit];
                 const digits = this.data[symbol].digits;
-                
-                // Find clusters for this digit
                 const digitData = allClusters.find(d => d.digit === digit);
                 const clusters = digitData ? digitData.clusters : [];
                 
                 if (clusters.length === 0) {
-                    // No clusters for this digit
                     if (tracking.isActive) {
-                        // Check if there's a solo digit that breaks the pattern
                         const lastDigitIndex = digits.length - 1;
                         if (digits[lastDigitIndex] === digit) {
-                            // Solo digit detected - end pattern
                             if (tracking.currentClusters >= 2) {
                                 this.recordPatternEnd(tracking.currentClusters);
-                                console.log(`Pattern ended for digit ${digit} at ${tracking.currentClusters} clusters (solo digit)`);
                             }
                             tracking.isActive = false;
                             tracking.currentClusters = 0;
@@ -794,39 +832,29 @@
                     return;
                 }
                 
-                // Check if we have a new cluster or pattern progression
                 const latestCluster = clusters[clusters.length - 1];
                 
                 if (!tracking.isActive) {
-                    // Start new pattern
                     tracking.isActive = true;
                     tracking.currentClusters = clusters.length;
                     tracking.lastClusterEnd = latestCluster.end;
-                    console.log(`New pattern started for digit ${digit} with ${clusters.length} clusters`);
                 } else {
-                    // Check if pattern continues or breaks
                     const newClusterCount = clusters.length;
                     
                     if (newClusterCount > tracking.currentClusters) {
-                        // New cluster added
                         const previousCluster = clusters[newClusterCount - 2];
                         
-                        // Check if there's a solo digit between clusters
                         if (this.hasSoloDigitBetweenClusters(digits, previousCluster.end, latestCluster.start, digit)) {
-                            // Pattern breaks - record old and start new
                             if (tracking.currentClusters >= 2) {
                                 this.recordPatternEnd(tracking.currentClusters);
-                                console.log(`Pattern ended for digit ${digit} at ${tracking.currentClusters} clusters (solo break)`);
                             }
-                            tracking.currentClusters = 1; // Start fresh with just the new cluster
+                            tracking.currentClusters = 1;
                         } else {
-                            // Pattern continues
                             tracking.currentClusters = newClusterCount;
                         }
                         
                         tracking.lastClusterEnd = latestCluster.end;
                         
-                        // Check for alert
                         if (tracking.currentClusters === this.alertThreshold) {
                             this.triggerAlert(symbol, digit, tracking.currentClusters);
                         }
@@ -837,7 +865,7 @@
             hasSoloDigitBetweenClusters(digits, clusterEnd, nextClusterStart, digit) {
                 for (let i = clusterEnd + 1; i < nextClusterStart; i++) {
                     if (digits[i] === digit) {
-                        return true; // Found solo digit
+                        return true;
                     }
                 }
                 return false;
@@ -849,7 +877,6 @@
                     const element = document.getElementById(`clusters${clusterCount}`);
                     if (element) {
                         element.textContent = this.stats[clusterCount];
-                        console.log(`Updated stats for ${clusterCount} clusters: ${this.stats[clusterCount]}`);
                     }
                 }
             }
@@ -857,18 +884,19 @@
             triggerAlert(symbol, digit, clusterCount) {
                 const message = `🚨 Digit ${digit} reached ${clusterCount} clusters on ${symbol.replace('_', ' ')}`;
                 
-                // Voice alert
                 if (this.speechSynthesis) {
-                    const utterance = new SpeechSynthesisUtterance(message);
-                    utterance.rate = 0.8;
-                    utterance.pitch = 1.1;
-                    this.speechSynthesis.speak(utterance);
+                    try {
+                        const utterance = new SpeechSynthesisUtterance(message);
+                        utterance.rate = 0.8;
+                        utterance.pitch = 1.1;
+                        this.speechSynthesis.speak(utterance);
+                    } catch (e) {
+                        console.error('Speech synthesis error:', e);
+                    }
                 }
                 
-                // Add to alerts log
                 this.addAlert(message);
-                
-                console.log('ALERT:', message);
+                this.showToast(message);
             }
 
             addAlert(message) {
@@ -882,7 +910,6 @@
                 
                 alertsLog.insertBefore(alertItem, alertsLog.firstChild);
                 
-                // Keep only last 10 alerts
                 while (alertsLog.children.length > 10) {
                     alertsLog.removeChild(alertsLog.lastChild);
                 }
@@ -910,7 +937,6 @@
                 let start = position;
                 let end = position;
                 
-                // Find cluster boundaries
                 while (start > 0 && digits[start - 1] === digit) {
                     start--;
                 }
@@ -929,20 +955,22 @@
 
                 streamEl.innerHTML = '';
 
-                visualization.forEach((item) => {
+                visualization.forEach((item, index) => {
                     const digitEl = document.createElement('div');
                     digitEl.className = 'digit';
-
-                    // Always convert digit to string so 0 shows properly
                     digitEl.textContent = String(item.digit);
+                    digitEl.setAttribute('aria-label', `Digit ${item.digit}${item.clusterSize >= 2 ? ` in cluster of ${item.clusterSize}` : ''}`);
 
-                    // Avoid skipping cluster class if clusterSize is 0 (aka falsy)
                     if (item.clusterSize !== 0 && item.clusterSize >= 2) {
                         digitEl.classList.add(`cluster-${Math.min(item.clusterSize, 6)}`);
                     }
 
                     streamEl.appendChild(digitEl);
                 });
+            }
+
+            updateDigitStreamAll() {
+                this.volatilities.forEach(vol => this.updateDigitStream(vol));
             }
 
             updatePatternInfo(symbol) {
@@ -953,18 +981,17 @@
                 
                 for (let digit = 0; digit <= 9; digit++) {
                     const count = tracking[digit].currentClusters;
-                    // Fixed condition: show badge if there are clusters AND pattern is active
-                    if (count >= 1 && tracking[digit].isActive) {
+                    if (count >= 1 && tracking[digit].among0].isActive) {
                         const badge = document.createElement('div');
                         badge.className = 'pattern-badge';
                         badge.textContent = `${digit}: ${count} clusters`;
+                        badge.setAttribute('aria-label', `Digit ${digit} has ${count} clusters`);
                         patternEl.appendChild(badge);
                     }
                 }
             }
         }
 
-        // Initialize the application
         document.addEventListener('DOMContentLoaded', () => {
             new VolatilityMonitor();
         });
