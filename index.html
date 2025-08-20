@@ -362,8 +362,8 @@
                 <select id="alertThreshold" aria-label="Select alert threshold">
                     <option value="2">2 Clusters</option>
                     <option value="3">3 Clusters</option>
-                    <option value="4" selected>4 Clusters</option>
-                    <option value="5">5 Clusters</option>
+                    <option value="4">4 Clusters</option>
+                    <option value="5" selected>5 Clusters</option>
                     <option value="6">6 Clusters</option>
                 </select>
             </div>
@@ -419,7 +419,7 @@
                     <h3>🔔 Recent Alerts</h3>
                     <div class="alerts-log" id="alertsLog" aria-live="polite">
                         <div class="alert-item">
-                            <div>System ready - waiting for pats</div>
+                            <div>System ready - waiting for patterns</div>
                             <div class="alert-time">Ready to monitor</div>
                         </div>
                     </div>
@@ -436,7 +436,7 @@
                 this.volatilities = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100'];
                 this.data = {};
                 this.stats = { 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-                this.alertThreshold = 4;
+                this.alertThreshold = 5;
                 this.isConnected = false;
                 this.speechSynthesis = window.speechSynthesis;
                 this.reconnectTimeout = null;
@@ -447,7 +447,7 @@
                 this.debounceTimeout = null;
                 this.token = '';
                 this.autoTrade = false;
-                this.reqId = 1000;
+                this.pendingTrade = null;
 
                 this.initializeData();
                 this.initializeUI();
@@ -469,7 +469,8 @@
                             currentClusters: 0,
                             isActive: false,
                             lastClusterEnd: -1,
-                            expectedNextCluster: false
+                            expectedNextCluster: false,
+                            waitingForSingle: false
                         };
                     }
                 });
@@ -752,13 +753,15 @@
                             currentClusters: 0,
                             isActive: false,
                             lastClusterEnd: -1,
-                            expectedNextCluster: false
+                            expectedNextCluster: false,
+                            waitingForSingle: false
                         };
                     }
                     this.updateDigitStream(vol);
                     this.updatePatternInfo(vol);
                     document.getElementById(`lastTick-${vol}`).textContent = '--';
                 });
+                this.pendingTrade = null;
             }
 
             showToast(message, duration = 3000) {
@@ -780,7 +783,7 @@
                 }, duration);
             }
 
-            updateStatus(message-worthwhile, className) {
+            updateStatus(message, className) {
                 const statusEl = document.getElementById('status');
                 statusEl.textContent = message;
                 statusEl.className = `status ${className}`;
@@ -815,6 +818,35 @@
                         if (this.data[symbol].patternTracking[digit].lastClusterEnd > 0) {
                             this.data[symbol].patternTracking[digit].lastClusterEnd--;
                         }
+                    }
+                }
+                
+                // Check for pending trade and single digit occurrence
+                if (this.pendingTrade && this.pendingTrade.symbol === symbol && this.autoTrade && this.token && this.isConnected) {
+                    const digits = this.data[symbol].digits;
+                    const lastIndex = digits.length - 1;
+                    const isSingleDigit = (lastIndex === 0 || digits[lastIndex - 1] !== lastDigit) && 
+                                         (lastIndex === digits.length - 1 || digits[lastIndex + 1] !== lastDigit);
+                    if (lastDigit === this.pendingTrade.digit && isSingleDigit) {
+                        const proposalMsg = {
+                            proposal: 1,
+                            amount: 1,
+                            basis: "stake",
+                            contract_type: "DIGITDIFF",
+                            currency: "USD",
+                            duration: 1,
+                            duration_unit: "t",
+                            symbol: symbol,
+                            barrier: this.pendingTrade.digit.toString()
+                        };
+                        try {
+                            this.socket.send(JSON.stringify(proposalMsg));
+                            this.addAlert(`Trade proposed for ${symbol}: DIGITDIFF on digit ${this.pendingTrade.digit}`);
+                        } catch (e) {
+                            console.error('Error sending proposal:', e);
+                            this.showToast('Error placing trade');
+                        }
+                        this.pendingTrade = null;
                     }
                 }
                 
@@ -888,13 +920,14 @@
                 if (clusters.length === 0) {
                     if (tracking.isActive) {
                         const lastDigitIndex = digits.length - 1;
-                        if (digits[lastDigitIndex] === digit) {
+                        if (digits[lastDigitIndex] !== digit) {
                             if (tracking.currentClusters >= 2) {
                                 this.recordPatternEnd(tracking.currentClusters);
                             }
                             tracking.isActive = false;
                             tracking.currentClusters = 0;
                             tracking.lastClusterEnd = -1;
+                            tracking.waitingForSingle = false;
                         }
                     }
                     return;
@@ -925,6 +958,20 @@
                         
                         if (tracking.currentClusters === this.alertThreshold) {
                             this.triggerAlert(symbol, digit, tracking.currentClusters);
+                        }
+                    }
+                }
+
+                // Check for single digit after 5 clusters
+                if (tracking.currentClusters === 5 && !tracking.waitingForSingle) {
+                    const lastIndex = digits.length - 1;
+                    if (lastIndex > tracking.lastClusterEnd && digits[lastIndex] === digit) {
+                        const isSingleDigit = (lastIndex === 0 || digits[lastIndex - 1] !== digit) && 
+                                             (lastIndex === digits.length - 1 || digits[lastIndex + 1] !== digit);
+                        if (isSingleDigit) {
+                            tracking.waitingForSingle = true;
+                            this.pendingTrade = { symbol, digit };
+                            this.showToast(`Waiting for single digit ${digit} on ${symbol} to place DIGITDIFF trade`);
                         }
                     }
                 }
@@ -966,25 +1013,11 @@
                 this.addAlert(message);
                 this.showToast(message);
 
-                if (this.autoTrade && this.token && this.isConnected) {
-                    const proposalMsg = {
-                        proposal: 1,
-                        amount: 1,
-                        basis: "stake",
-                        contract_type: "DIGITDIFF",
-                        currency: "USD",
-                        duration: 1,
-                        duration_unit: "t",
-                        symbol: symbol,
-                        barrier: digit.toString()
-                    };
-                    try {
-                        this.socket.send(JSON.stringify(proposalMsg));
-                    } catch (e) {
-                        console.error('Error sending proposal:', e);
-                        this.showToast('Error placing trade');
-                    }
-                } else if (this.autoTrade) {
+                if (this.autoTrade && this.token && this.isConnected && clusterCount === 5) {
+                    this.data[symbol].patternTracking[digit].waitingForSingle = true;
+                    this.pendingTrade = { symbol, digit };
+                    this.showToast(`Waiting for single digit ${digit} on ${symbol} to place DIGITDIFF trade`);
+                } else if (this.autoTrade && clusterCount === 5) {
                     this.showToast('Auto-trade attempted but not authorized');
                 }
             }
