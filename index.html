@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Real-time volatility cluster monitor for Deriv platform">
-    <title>Deriv Volatility Cluster Monitor</title>
+    <meta name="description" content="Real-time volatility cluster monitor for Deriv platform with auto-trading">
+    <title>Deriv Volatility Cluster Monitor with Auto-Trading</title>
     <style>
         * {
             margin: 0;
@@ -125,14 +125,14 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
-        .volatility-header {
+        .card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
         }
 
-        .volatility-title {
+        .card-header h3 {
             font-size: 1.3em;
             font-weight: bold;
             text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
@@ -333,8 +333,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 Deriv Volatility Cluster Monitor</h1>
-            <p>Real-time pattern detection across all volatility indices</p>
+            <h1>🎯 Deriv Volatility Cluster Monitor with Auto-Trading</h1>
+            <p>Real-time pattern detection across all volatility indices with automated trading</p>
         </div>
 
         <div class="controls">
@@ -342,6 +342,10 @@
                 <label for="appIdInput">App ID:</label>
                 <input type="text" id="appIdInput" placeholder="Enter your Deriv app_id" value="1089" aria-describedby="appIdHelp">
                 <small id="appIdHelp" class="sr-only">Enter your Deriv API application ID</small>
+            </div>
+            <div class="control-group">
+                <label for="tokenInput">API Token:</label>
+                <input type="text" id="tokenInput" placeholder="Enter your Deriv API token">
             </div>
             <div class="control-group">
                 <label for="volatilitySelect">Display Volatility:</label>
@@ -362,6 +366,10 @@
                     <option value="5">5 Clusters</option>
                     <option value="6">6 Clusters</option>
                 </select>
+            </div>
+            <div class="control-group">
+                <label for="autoTrade">Auto Trade:</label>
+                <input type="checkbox" id="autoTrade">
             </div>
             <div class="control-group">
                 <label>&nbsp;</label>
@@ -437,6 +445,9 @@
                 this.reconnectMultiplier = 1.5;
                 this.isFirstConnection = true;
                 this.debounceTimeout = null;
+                this.token = '';
+                this.autoTrade = false;
+                this.reqId = 1000;
 
                 this.initializeData();
                 this.initializeUI();
@@ -471,14 +482,18 @@
                     const card = document.createElement('div');
                     card.className = 'volatility-card';
                     card.setAttribute('aria-label', `Volatility monitor for ${vol.replace('_', ' ')}`);
+                    
                     card.innerHTML = `
-                        <div class="volatility-header">
-                            <div class="volatility-title">${vol.replace('_', ' ')}</div>
-                            <div class="last-tick" id="lastTick-${vol}" aria-live="polite">--</div>
+                        <div class="card-header">
+                            <h3>${vol.replace('_', ' ')}</h3>
+                            <div class="last-tick">
+                                Last Tick: <span id="lastTick-${vol}">--</span>
+                            </div>
                         </div>
                         <div class="digit-stream" id="stream-${vol}" aria-label="Digit stream for ${vol.replace('_', ' ')}"></div>
-                        <div class="pattern-info" id="patterns-${vol}" aria-label="Pattern information for ${vol.replace('_', ' ')}"></div>
+                        <div class="pattern-info" id="patterns-${vol}" aria-label="Pattern info for ${vol.replace('_', ' ')}"></div>
                     `;
+                    
                     monitorsContainer.appendChild(card);
                 });
             }
@@ -502,11 +517,20 @@
                     this.saveSettings();
                 });
 
+                document.getElementById('tokenInput').addEventListener('change', (e) => {
+                    this.token = e.target.value.trim();
+                    this.saveSettings();
+                });
+
+                document.getElementById('autoTrade').addEventListener('change', (e) => {
+                    this.autoTrade = e.target.checked;
+                    this.saveSettings();
+                });
+
                 document.getElementById('resetStatsBtn').addEventListener('click', () => {
                     this.resetStats();
                 });
 
-                // Debounced window resize handler
                 window.addEventListener('resize', () => {
                     clearTimeout(this.debounceTimeout);
                     this.debounceTimeout = setTimeout(() => this.updateDigitStreamAll(), 100);
@@ -519,9 +543,17 @@
                     if (settings.appId) {
                         document.getElementById('appIdInput').value = settings.appId;
                     }
+                    if (settings.token) {
+                        document.getElementById('tokenInput').value = settings.token;
+                        this.token = settings.token;
+                    }
                     if (settings.alertThreshold) {
                         document.getElementById('alertThreshold').value = settings.alertThreshold;
                         this.alertThreshold = parseInt(settings.alertThreshold);
+                    }
+                    if (settings.autoTrade !== undefined) {
+                        document.getElementById('autoTrade').checked = settings.autoTrade;
+                        this.autoTrade = settings.autoTrade;
                     }
                 } catch (e) {
                     console.error('Error loading settings:', e);
@@ -532,7 +564,9 @@
                 try {
                     const settings = {
                         appId: document.getElementById('appIdInput').value.trim(),
-                        alertThreshold: document.getElementById('alertThreshold').value
+                        token: document.getElementById('tokenInput').value.trim(),
+                        alertThreshold: document.getElementById('alertThreshold').value,
+                        autoTrade: document.getElementById('autoTrade').checked
                     };
                     localStorage.setItem('volatilityMonitorSettings', JSON.stringify(settings));
                 } catch (e) {
@@ -604,6 +638,16 @@
                             }
                         }, index * 200);
                     });
+
+                    if (this.token) {
+                        try {
+                            this.socket.send(JSON.stringify({ authorize: this.token }));
+                        } catch (e) {
+                            console.error('Error sending authorize:', e);
+                        }
+                    } else if (this.autoTrade) {
+                        this.showToast('Auto-trade enabled but no token provided');
+                    }
                 };
 
                 this.socket.onmessage = (event) => {
@@ -614,6 +658,30 @@
                             this.processTick(data.tick);
                         } else if (data.subscription) {
                             this.updateStatus('Connected - Monitoring all volatilities', 'connected');
+                        } else if (data.msg_type === 'authorize') {
+                            if (data.error) {
+                                this.showToast(`Authorization error: ${data.error.message}`);
+                            } else {
+                                this.showToast('Authorized successfully');
+                            }
+                        } else if (data.msg_type === 'proposal') {
+                            if (data.error) {
+                                this.showToast(`Proposal error: ${data.error.message}`);
+                            } else {
+                                const proposal = data.proposal;
+                                const buyMsg = {
+                                    buy: proposal.id,
+                                    price: proposal.ask_price
+                                };
+                                this.socket.send(JSON.stringify(buyMsg));
+                            }
+                        } else if (data.msg_type === 'buy') {
+                            if (data.error) {
+                                this.showToast(`Buy error: ${data.error.message}`);
+                            } else {
+                                this.addAlert(`Trade placed: Contract ID ${data.buy.contract_id}`);
+                                this.showToast('Trade placed successfully');
+                            }
                         } else if (data.error) {
                             console.error('API Error:', data.error);
                             this.updateStatus(`Error: ${data.error.message}`, 'disconnected');
@@ -712,7 +780,7 @@
                 }, duration);
             }
 
-            updateStatus(message, className) {
+            updateStatus(message-worthwhile, className) {
                 const statusEl = document.getElementById('status');
                 statusEl.textContent = message;
                 statusEl.className = `status ${className}`;
@@ -897,6 +965,28 @@
                 
                 this.addAlert(message);
                 this.showToast(message);
+
+                if (this.autoTrade && this.token && this.isConnected) {
+                    const proposalMsg = {
+                        proposal: 1,
+                        amount: 1,
+                        basis: "stake",
+                        contract_type: "DIGITDIFF",
+                        currency: "USD",
+                        duration: 1,
+                        duration_unit: "t",
+                        symbol: symbol,
+                        barrier: digit.toString()
+                    };
+                    try {
+                        this.socket.send(JSON.stringify(proposalMsg));
+                    } catch (e) {
+                        console.error('Error sending proposal:', e);
+                        this.showToast('Error placing trade');
+                    }
+                } else if (this.autoTrade) {
+                    this.showToast('Auto-trade attempted but not authorized');
+                }
             }
 
             addAlert(message) {
@@ -981,7 +1071,7 @@
                 
                 for (let digit = 0; digit <= 9; digit++) {
                     const count = tracking[digit].currentClusters;
-                    if (count >= 1 && tracking[digit].among0].isActive) {
+                    if (count >= 1 && tracking[digit].isActive) {
                         const badge = document.createElement('div');
                         badge.className = 'pattern-badge';
                         badge.textContent = `${digit}: ${count} clusters`;
